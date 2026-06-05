@@ -1,0 +1,71 @@
+# ABK Stock Config - eBPF 追踪支持
+# 适用于 Redmi K70 / Android 16 / 内核 5.15.123
+
+# ==================== eBPF 基础支持 ====================
+CONFIG_BPF=y
+CONFIG_BPF_SYSCALL=y
+CONFIG_BPF_JIT=y
+CONFIG_BPF_JIT_ALWAYS_ON=y
+CONFIG_BPF_JIT_DEFAULT_ON=y
+
+# ==================== Kprobe 支持 ====================
+CONFIG_KPROBES=y
+CONFIG_KPROBE_EVENTS=y
+
+# ==================== Ftrace syscalls 支持 ====================
+CONFIG_FTRACE_SYSCALLS=y
+CONFIG_HAVE_SYSCALL_TRACEPOINTS=y
+CONFIG_FTRACE=y
+CONFIG_FUNCTION_TRACER=y
+CONFIG_FUNCTION_GRAPH_TRACER=y
+
+# ==================== Uprobe 支持 ====================
+CONFIG_UPROBES=y
+CONFIG_UPROBE_EVENTS=y
+
+# ==================== BTF 支持 ====================
+CONFIG_DEBUG_INFO_BTF=y
+CONFIG_BTF=y
+CONFIG_DEBUG_INFO=y
+CONFIG_DEBUG_INFO_REDUCED=n
+
+# ==================== cgroup BPF ====================
+CONFIG_CGROUP_BPF=y
+CONFIG_CGROUP_NET_PRIO=y
+CONFIG_CGROUP_NET_CLASSID=y
+
+# ==================== 网络 eBPF ====================
+CONFIG_NET_CLS_BPF=y
+CONFIG_NET_ACT_BPF=y
+CONFIG_BPF_STREAM_PARSER=y
+
+# ==================== 进程追踪 ====================
+CONFIG_PID_NS=y
+CONFIG_UTS_NS=y
+CONFIG_IPC_NS=y
+
+# ==================== 内存映射 ====================
+CONFIG_MEMCG=y
+CONFIG_MEMCG_SWAP=y
+CONFIG_MEMCG_KMEM=y
+
+# ==================== 调试支持 ====================
+CONFIG_DEBUG_FS=y
+CONFIG_TRACEFS=y
+CONFIG_KALLSYMS=y
+CONFIG_KALLSYMS_ALL=y
+
+# ==================== 性能优化 ====================
+CONFIG_PREEMPT=y
+CONFIG_PREEMPT_COUNT=y
+CONFIG_PREEMPT_VOLUNTARY=y
+
+# ==================== 其他必要选项 ====================
+CONFIG_PROC_FS=y
+CONFIG_SYSFS=y
+CONFIG_TMPFS=y
+CONFIG_TMPFS_POSIX_ACL=y
+
+# ==================== 架构特定 ====================
+CONFIG_ARCH_SUPPORTS_BPF=y
+CONFIG_ARCH_SUPPORTS_EBPF_JIT=y
