@@ -6974,6 +6974,6 @@ CONFIG_ARCH_USE_MEMTEST=y
 # end of Kernel Testing and Coverage
 # end of Kernel hacking
 
-# eBPF support
+# eBPF Tracing Support
 CONFIG_DEBUG_INFO_BTF=y
 CONFIG_BTF=y
