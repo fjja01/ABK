@@ -1,0 +1,391 @@
+name: 内核构建流程
+permissions:
+  contents: write
+  actions: write
+on:
+  workflow_call:
+    inputs:
+      android_version:
+        required: true
+        type: string
+      kernel_version:
+        required: true
+        type: string
+      sub_level:
+        required: true
+        type: string
+      os_patch_level:
+        required: true
+        type: string
+      ksu_variant:
+        required: true
+        type: string
+      ksu_branch:
+        required: true
+        type: string
+      custom_ref:
+        required: false
+        type: string
+      version:
+        required: false
+        type: string
+      revision:
+        required: false
+        type: string
+      build_time:
+        required: false
+        type: string
+        default: "Sun Dec 01 08:10:00 UTC 2024"
+      use_zram:
+        required: false
+        type: boolean
+        default: true
+      use_bbg:
+        required: false
+        type: boolean
+        default: true
+      use_ddk:
+        required: false
+        type: boolean
+        default: false
+      use_ntsync:
+        required: false
+        type: boolean
+        default: true
+      use_networking:
+        required: false
+        type: boolean
+        default: true
+      use_kpm:
+        required: false
+        type: boolean
+        default: true
+      use_rekernel:
+        required: false
+        type: boolean
+        default: false
+      enable_susfs:
+        required: false
+        type: boolean
+        default: true
+      supp_op:
+        required: false
+        type: boolean
+        default: false
+      virtualization_support:
+        required: false
+        type: string
+        default: "off"
+      zram_full_algo:
+        required: false
+        type: boolean
+        default: false
+      zram_extra_algos:
+        required: false
+        type: string
+        default: ""
+      kpm_password:
+        required: false
+        type: string
+        default: ""
+      use_custom_external_modules:
+        required: false
+        type: boolean
+        default: false
+      custom_external_modules:
+        required: false
+        type: string
+        default: ""
+      manager_package:
+        required: false
+        type: string
+        default: ""
+      manager_cert_size:
+        required: false
+        type: string
+        default: ""
+      manager_cert_sha256:
+        required: false
+        type: string
+        default: ""
+      upload_aux_artifacts:
+        required: false
+        type: boolean
+        default: true
+jobs:
+  build-kernel:
+    name: "${{ inputs.kernel_version }}.${{ inputs.sub_level }}-${{ inputs.android_version }}-${{ inputs.os_patch_level }}-${{ inputs.ksu_variant }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
+      CCACHE_NOHASHDIR: "true"
+      CCACHE_HARDLINK: "true"
+    steps:
+      - name: 构建信息摘要
+        shell: bash
+        run: |
+          set -euo pipefail
+          effective_use_zram="${{ inputs.use_zram }}"
+          effective_zram_full_algo="${{ inputs.zram_full_algo }}"
+          effective_zram_extra_algos="${{ inputs.zram_extra_algos || '' }}"
+          effective_zram_legacy_lz4k="true"
+          effective_zram_use_optional_algo="false"
+          if [ "${{ inputs.kernel_version }}" = "6.12" ]; then
+            effective_zram_legacy_lz4k="false"
+            if [ "$effective_zram_full_algo" = "true" ]; then
+              echo "::warning::Android16/6.12 会跳过 legacy LZ4K/LZ4KD/LZ4K_OPLUS 补丁栈，仅保留内核原生支持的 ZRAM 算法。"
+            fi
+            if [ -n "$effective_zram_extra_algos" ]; then
+              filtered_algos="$(python3 -c 'import sys; blocked={\"lz4k\",\"lz4kd\",\"lz4k_oplus\"}; print(\",\".join(item.strip() for item in sys.argv[1].split(\",\") if item.strip() and item.strip().lower() not in blocked))' "$effective_zram_extra_algos")"
+              if [ "$filtered_algos" != "$effective_zram_extra_algos" ]; then
+                echo "::warning::Android16/6.12 不支持 legacy LZ4K/LZ4KD/LZ4K_OPLUS，已自动从自定义算法列表移除。"
+              fi
+              effective_zram_extra_algos="$filtered_algos"
+            fi
+          fi
+          if [ "$effective_use_zram" = "true" ] && [ "$effective_zram_full_algo" != "true" ] && [ -n "$effective_zram_extra_algos" ]; then
+            if python3 -c 'import sys; algos=[item.strip().lower() for item in sys.argv[1].split(",") if item.strip()]; raise SystemExit(0 if "zstdp" in algos else 1)' "$effective_zram_extra_algos"; then
+              effective_zram_use_optional_algo="true"
+            fi
+          fi
+          {
+            echo "EFFECTIVE_USE_ZRAM=$effective_use_zram"
+            echo "EFFECTIVE_ZRAM_FULL_ALGO=$effective_zram_full_algo"
+            echo "EFFECTIVE_ZRAM_EXTRA_ALGOS=$effective_zram_extra_algos"
+            echo "EFFECTIVE_ZRAM_LEGACY_LZ4K=$effective_zram_legacy_lz4k"
+            echo "EFFECTIVE_ZRAM_USE_OPTIONAL_ALGO=$effective_zram_use_optional_algo"
+          } >> "$GITHUB_ENV"
+          effective_ksu_branch="${{ inputs.ksu_branch }}"
+          if [ "$effective_ksu_branch" = "SUSFS(自动)" ]; then
+            effective_ksu_branch="Stable(标准)"
+          fi
+          echo "EFFECTIVE_KSU_BRANCH=$effective_ksu_branch" >> "$GITHUB_ENV"
+          zram_extra_label="${effective_zram_extra_algos:-无}"
+          echo "========================================"
+          echo "       内核构建配置摘要"
+          echo "========================================"
+          echo "Android 版本  : ${{ inputs.android_version }}"
+          echo "内核版本      : ${{ inputs.kernel_version }}"
+          echo "子版本号      : ${{ inputs.sub_level }}"
+          echo "补丁级别      : ${{ inputs.os_patch_level }}"
+          echo "KSU 变体      : ${{ inputs.ksu_variant }}"
+          echo "KSU 分支      : $effective_ksu_branch"
+          echo "管理器包名    : ${{ inputs.manager_package || 'app/signing/abk-manager-cert.env' }}"
+          echo "构建时间      : ${{ inputs.build_time }}"
+          echo "SUSFS 状态    : ${{ inputs.enable_susfs }}"
+          echo "ZRAM 增强     : $effective_use_zram"
+          echo "ZRAM 完整算法 : $effective_zram_full_algo"
+          echo "ZRAM 额外算法 : $zram_extra_label"
+          echo "BBG 补丁      : ${{ inputs.use_bbg }}"
+          echo "DDK LSM       : ${{ inputs.use_ddk }}"
+          echo "NTsync 补丁   : ${{ inputs.use_ntsync }}"
+          echo "Networing 增强: ${{ inputs.use_networking }}"
+          echo "KPM 功能      : ${{ inputs.use_kpm }}"
+          echo "KPM 密码      : ${{ inputs.kpm_password && '已自定义' || '默认' }}"
+          echo "Re-Kernel     : ${{ inputs.use_rekernel }}"
+          echo "虚拟化支持   : ${{ inputs.virtualization_support }}"
+          echo "自定义注入    : ${{ inputs.use_custom_external_modules }}"
+          echo "Stock Config  : 自动检测 config/stock_defconfig"
+          echo "========================================"
+      - name: 校验自定义内核版本组合
+        shell: bash
+        run: |
+          set -euo pipefail
+          android_version="${{ inputs.android_version }}"
+          kernel_version="${{ inputs.kernel_version }}"
+          sub_level="${{ inputs.sub_level }}"
+          os_patch_level="${{ inputs.os_patch_level }}"
+          combo="${android_version}-${kernel_version}"
+          case "$combo" in
+            android12-5.10|android13-5.15|android14-6.1|android15-6.6|android16-6.12) ;;
+            *)
+              echo "::error::不支持的 Android/内核组合: ${android_version}/${kernel_version}"
+              echo "::error::当前工作流支持: android12/5.10, android13/5.15, android14/6.1, android15/6.6, android16/6.12"
+              exit 1
+              ;;
+          esac
+          if [ "${{ inputs.use_kpm }}" = "true" ] \
+            && [ "${{ inputs.ksu_variant }}" = "Official" ]; then
+            echo "::error::Official / KernelSU 变体不支持 KPM，请关闭 KPM 后重试。"
+            exit 1
+          fi
+          if [ "${{ inputs.use_kpm }}" = "true" ] \
+            && [ "${{ inputs.ksu_variant }}" = "ReSukiSU" ] \
+            && { [ "${{ inputs.ksu_branch }}" = "Dev(开发)" ] || [ "${{ inputs.ksu_branch }}" = "Latest(最新)" ]; }; then
+            echo "::error::ReSukiSU 仅 Stable(标准) / Custom(自定义) 支持 KPM，请切换分支或关闭 KPM。"
+            exit 1
+          fi
+          if [ "$sub_level" = "X" ] || [ "$os_patch_level" = "lts" ]; then
+            if [ "$sub_level" = "X" ] && [ "$os_patch_level" = "lts" ]; then
+              echo "LTS 构建组合校验通过: ${combo}.${sub_level}-${os_patch_level}"
+              exit 0
+            fi
+            echo "::error::LTS 构建必须同时使用 sub_level=X 和 os_patch_level=lts"
+            exit 1
+          fi
+          KNOWN_KERNEL_PAIRS=$(cat <<'EOF'
+          android12 5.10 43 2021-08
+          android12 5.10 43 2021-09
+          android12 5.10 43 2021-10
+          android12 5.10 66 2021-11
+          android12 5.10 66 2021-12
+          android12 5.10 66 2022-01
+          android12 5.10 81 2022-02
+          android12 5.10 81 2022-03
+          android12 5.10 101 2022-04
+          android12 5.10 101 2022-05
+          android12 5.10 110 2022-06
+          android12 5.10 110 2022-07
+          android12 5.10 117 2022-08
+          android12 5.10 117 2022-09
+          android12 5.10 136 2022-10
+          android12 5.10 136 2022-11
+          android12 5.10 149 2022-12
+          android12 5.10 149 2023-01
+          android12 5.10 160 2023-02
+          android12 5.10 160 2023-03
+          android12 5.10 168 2023-04
+          android12 5.10 168 2023-05
+          android12 5.10 177 2023-06
+          android12 5.10 177 2023-07
+          android12 5.10 185 2023-09
+          android12 5.10 198 2023-11
+          android12 5.10 198 2024-01
+          android12 5.10 205 2024-03
+          android12 5.10 209 2024-05
+          android12 5.10 218 2024-08
+          android12 5.10 226 2024-11
+          android12 5.10 233 2025-02
+          android12 5.10 236 2025-05
+          android12 5.10 237 2025-06
+          android12 5.10 240 2025-09
+          android12 5.10 246 2025-12
+          android13 5.15 41 2022-06
+          android13 5.15 41 2022-07
+          android13 5.15 41 2022-08
+          android13 5.15 41 2022-09
+          android13 5.15 41 2022-10
+          android13 5.15 41 2022-11
+          android13 5.15 74 2022-12
+          android13 5.15 74 2023-01
+          android13 5.15 78 2023-02
+          android13 5.15 78 2023-03
+          android13 5.15 94 2023-04
+          android13 5.15 94 2023-05
+          android13 5.15 104 2023-06
+          android13 5.15 104 2023-07
+          android13 5.15 119 2023-08
+          android13 5.15 119 2023-09
+          android13 5.15 119 2026-03
+          android13 5.15 123 2023-10
+          android13 5.15 123 2023-11
+          android13 5.15 137 2023-12
+          android13 5.15 137 2024-01
+          android13 5.15 144 2024-02
+          android13 5.15 144 2024-03
+          android13 5.15 148 2024-04
+          android13 5.15 148 2024-05
+          android13 5.15 149 2024-06
+          android13 5.15 149 2024-07
+          android13 5.15 151 2024-08
+          android13 5.15 153 2024-09
+          android13 5.15 167 2024-11
+          android13 5.15 170 2025-01
+          android13 5.15 178 2025-03
+          android13 5.15 180 2025-05
+          android13 5.15 185 2025-07
+          android13 5.15 189 2025-09
+          android13 5.15 194 2025-12
+          android14 6.1 25 2023-06
+          android14 6.1 25 2023-07
+          android14 6.1 25 2023-08
+          android14 6.1 25 2023-09
+          android14 6.1 25 2023-10
+          android14 6.1 43 2023-11
+          android14 6.1 57 2023-12
+          android14 6.1 57 2024-01
+          android14 6.1 68 2024-02
+          android14 6.1 68 2024-03
+          android14 6.1 75 2024-04
+          android14 6.1 75 2024-05
+          android14 6.1 78 2024-06
+          android14 6.1 84 2024-07
+          android14 6.1 90 2024-08
+          android14 6.1 93 2024-09
+          android14 6.1 99 2024-10
+          android14 6.1 112 2024-11
+          android14 6.1 115 2024-12
+          android14 6.1 118 2025-01
+          android14 6.1 124 2025-02
+          android14 6.1 128 2025-03
+          android14 6.1 129 2025-04
+          android14 6.1 134 2025-05
+          android14 6.1 138 2025-06
+          android14 6.1 141 2025-07
+          android14 6.1 145 2025-08
+          android14 6.1 145 2025-09
+          android14 6.1 157 2025-12
+          android14 6.1 162 2026-03
+          android15 6.6 50 2024-10
+          android15 6.6 56 2024-11
+          android15 6.6 57 2024-12
+          android15 6.6 58 2025-01
+          android15 6.6 66 2025-02
+          android15 6.6 77 2025-03
+          android15 6.6 82 2025-04
+          android15 6.6 87 2025-05
+          android15 6.6 89 2025-06
+          android15 6.6 92 2025-07
+          android15 6.6 98 2025-08
+          android15 6.6 98 2025-09
+          android15 6.6 102 2025-10
+          android15 6.6 118 2026-01
+          android15 6.6 127 2026-04
+          android16 6.12 23 2025-06
+          android16 6.12 30 2025-07
+          android16 6.12 38 2025-08
+          android16 6.12 38 2025-09
+          android16 6.12 58 2025-12
+          android16 6.12 69 2026-03
+          EOF
+          )
+          if awk -v a="$android_version" -v k="$kernel_version" -v s="$sub_level" -v p="$os_patch_level" \
+            '$1 == a && $2 == k && $3 == s && $4 == p { found = 1 } END { exit found ? 0 : 1 }' <<< "$KNOWN_KERNEL_PAIRS"; then
+            echo "内核版本组合校验通过: ${kernel_version}.${sub_level}-${android_version}-${os_patch_level}"
+            exit 0
+          fi
+          patches_for_sub=$(awk -v a="$android_version" -v k="$kernel_version" -v s="$sub_level" \
+            '$1 == a && $2 == k && $3 == s { print $4 }' <<< "$KNOWN_KERNEL_PAIRS" | sort -u | tr '\n' ' ')
+          sublevels_for_patch=$(awk -v a="$android_version" -v k="$kernel_version" -v p="$os_patch_level" \
+            '$1 == a && $2 == k && $4 == p { print $3 }' <<< "$KNOWN_KERNEL_PAIRS" | sort -n -u | tr '\n' ' ')
+          echo "::error::内核版本和安全补丁级别不匹配: ${kernel_version}.${sub_level}-${android_version}-${os_patch_level}"
+          if [ -n "$patches_for_sub" ]; then
+            echo "::error::${android_version}/${kernel_version}.${sub_level} 可用补丁级别: ${patches_for_sub}"
+          fi
+          if [ -n "$sublevels_for_patch" ]; then
+            echo "::error::${android_version}/${kernel_version}/${os_patch_level} 可用子版本号: ${sublevels_for_patch}"
+          fi
+          exit 1
+      - name: 清理磁盘空间
+        uses: endersonmenezes/free-disk-space@v3
+        with:
+          remove_android: true
+          remove_dotnet: true
+          remove_haskell: true
+          remove_tool_cache: true
+          remove_swap: true
+          remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* *llvm* mysql* dotnet-sdk-*"
+          remove_packages_one_command: true
+          remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
+          rm_cmd: "rmz"
+          rmz_version: "3.1.1"
+          testing: false
+      - name: 检出代码仓库
+        uses: actions/checkout@v6
+      - name: 确定 KernelSU 分支
+        if: inputs.ksu_variant != 'None'
+        id: ksu-branch
+        env:
+          KSU_VARIANT: ${{ inputs.ksu_variant }}
+          KSU_BRANCH:
