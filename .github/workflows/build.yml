@@ -2851,7 +2851,6 @@ jobs:
           fi
           echo "CONFIG_BBG=y" >> common/arch/arm64/configs/gki_defconfig
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' common/security/Kconfig
-          sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /bpf/! s/selinux,baseband_guard/selinux,baseband_guard,bpf/ } }' common/security/Kconfig
 
       - name: 添加 DDK 防格机 LSM
         if: inputs.use_ddk
@@ -3010,17 +3009,20 @@ jobs:
           CONFIG_BPF_JIT_ALWAYS_ON=y
           CONFIG_BPF_LSM=y
           CONFIG_DEBUG_INFO_BTF=y
-          CONFIG_DEBUG_INFO_BTF_MODULES=y
           CONFIG_FUNCTION_TRACER=y
           CONFIG_FTRACE_SYSCALLS=y
-          CONFIG_HAVE_EBPF_JIT=y
           CONFIG_BPF_EVENTS=y
           CONFIG_NET_CLS_BPF=y
           CONFIG_NET_ACT_BPF=y
-          CONFIG_BPF_STREAM_PARSER=y
           CONFIG_SECURITY_BPF=y
-          CONFIG_SECURITY_BPF_LSM=y
           EOF
+
+          # 设置 LSM 列表，包含 bpf 模块（根据 BBG 是否启用选择对应值）
+          if [ "${{ inputs.use_bbg }}" = "true" ]; then
+            echo 'CONFIG_LSM="selinux,baseband_guard,bpf"' >> "$DEFCONFIG"
+          else
+            echo 'CONFIG_LSM="selinux,bpf"' >> "$DEFCONFIG"
+          fi
           if [ "${{ inputs.ksu_variant }}" != "None" ]; then
             echo "CONFIG_KSU=y" >> "$DEFCONFIG"
           fi
