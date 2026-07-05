@@ -5393,6 +5393,14 @@ jobs:
             sed -i '/MODULES_ORDER=android\/gki_aarch64_modules/d' ./common/build.config.gki.aarch64
             sed -i '/KMI_SYMBOL_LIST_STRICT_MODE/d' ./common/build.config.gki.aarch64
 
+            # 修复 resolve_btfids libsubcmd parse-options.c 的 -Wshadow 编译错误
+            PARSE_OPTIONS_C="$KERNEL_ROOT/common/tools/bpf/resolve_btfids/libsubcmd/parse-options.c"
+            if [ -f "$PARSE_OPTIONS_C" ]; then
+              echo "修复 resolve_btfids parse-options.c -Wshadow 错误"
+              # 找到 tools/bpf/resolve_btfids 及其子目录的 Makefile，禁用 -Werror
+              find "$KERNEL_ROOT/common/tools/bpf/resolve_btfids" -name 'Makefile*' -type f -exec sed -i 's/-Werror/-Wno-error/g' {} \; 2>/dev/null || true
+            fi
+
             if [ -f "build/build.sh" ]; then
               LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh CC="/usr/bin/ccache clang" || exit 1
               strings "out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist/Image" | grep 'Linux version'
