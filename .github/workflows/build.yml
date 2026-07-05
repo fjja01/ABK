@@ -5394,17 +5394,18 @@ jobs:
             sed -i '/KMI_SYMBOL_LIST_STRICT_MODE/d' ./common/build.config.gki.aarch64
 
             # 修复 resolve_btfids libsubcmd parse-options.c 的 -Wshadow 编译错误
-            PARSE_OPTIONS_C="$KERNEL_ROOT/common/tools/bpf/resolve_btfids/libsubcmd/parse-options.c"
-            if [ -f "$PARSE_OPTIONS_C" ]; then
-              echo "修复 resolve_btfids parse-options.c -Wshadow 错误"
-              # 使用 sed 直接修复变量遮蔽问题
-              # 第641行 int i; 遮蔽第637行的 int i;
+            # 使用 find 命令定位文件，因为路径可能随内核版本变化
+            find "$KERNEL_ROOT" -name 'parse-options.c' -path '*resolve_btfids*' 2>/dev/null | head -5
+            PARSE_OPTIONS_C=$(find "$KERNEL_ROOT" -name 'parse-options.c' -path '*resolve_btfids*' 2>/dev/null | head -1)
+            if [ -n "$PARSE_OPTIONS_C" ]; then
+              echo "找到 parse-options.c: $PARSE_OPTIONS_C"
+              # 修复变量遮蔽问题
               sed -i '641s/int i;/int j;/' "$PARSE_OPTIONS_C"
-              # 第671行 int i; 重复声明
               sed -i '671s/int i;/int j;/' "$PARSE_OPTIONS_C"
-              # 第672行 int i; 重复声明
               sed -i '672s/int i;/int k;/' "$PARSE_OPTIONS_C"
               echo "已修复 parse-options.c 的变量遮蔽问题"
+            else
+              echo "警告: 未找到 parse-options.c"
             fi
 
             if [ -f "build/build.sh" ]; then
