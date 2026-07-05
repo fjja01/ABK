@@ -5397,9 +5397,45 @@ jobs:
             PARSE_OPTIONS_C="$KERNEL_ROOT/common/tools/bpf/resolve_btfids/libsubcmd/parse-options.c"
             if [ -f "$PARSE_OPTIONS_C" ]; then
               echo "修复 resolve_btfids parse-options.c -Wshadow 错误"
-              # 找到 tools/bpf/resolve_btfids 及其子目录的 Makefile，禁用 -Werror
-              find "$KERNEL_ROOT/common/tools/bpf/resolve_btfids" -name 'Makefile*' -type f -exec sed -i 's/-Werror/-Wno-error/g' {} \; 2>/dev/null || true
-            fi
+              # 读取文件，找到需要修改的行
+              # 错误位置: 第641行 int i; 遮蔽第637行的 int i;
+              # 第671-672行 int i; 重复声明
+              # 使用 Python 更可靠地修复
+              python3 - "$PARSE_OPTIONS_C" << 'PY'
+import re
+
+with open(sys.argv[1], 'r') as f:
+    lines = f.readlines()
+
+# 修复第641行附近的变量遮蔽 (将内层 i 重命名为 j)
+if len(lines) > 640:
+    # 找到第637行附近的外层 for 循环
+    # 在第641行找到 int i; 并重命名
+    for offset in [640, 641]:  # 0-based
+        if offset < len(lines) and 'int i;' in lines[offset]:
+            # 检查前面是否已经有 int i;
+            prev_i = False
+            for j in range(max(0, offset-20), offset):
+                if 'int i;' in lines[j]:
+                    prev_i = True
+                    break
+            if prev_i:
+                lines[offset] = lines[offset].replace('int i;', 'int j;')
+
+# 修复第671-672行的重复声明
+if len(lines) > 671:
+    if 'int i;' in lines[670]:  # 0-based = 671
+        lines[670] = lines[670].replace('int i;', 'int j;')
+    if 'int i;' in lines[671]:  # 0-based = 672
+        lines[671] = lines[671].replace('int i;', 'int k;')
+
+with open(sys.argv[1], 'w') as f:
+    f.writelines(lines)
+PY
+            echo "已修复 parse-options.c 的变量遮蔽问题"
+            # 验证修复
+            grep -n 'int i;' "$PARSE_OPTIONS_C" | head -20
+          fi
 
             if [ -f "build/build.sh" ]; then
               LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh CC="/usr/bin/ccache clang" || exit 1
