@@ -2851,6 +2851,7 @@ jobs:
           fi
           echo "CONFIG_BBG=y" >> common/arch/arm64/configs/gki_defconfig
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' common/security/Kconfig
+          sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /bpf/! s/selinux,baseband_guard/selinux,baseband_guard,bpf/ } }' common/security/Kconfig
 
       - name: 添加 DDK 防格机 LSM
         if: inputs.use_ddk
@@ -3017,7 +3018,6 @@ jobs:
           CONFIG_NET_CLS_BPF=y
           CONFIG_NET_ACT_BPF=y
           CONFIG_BPF_STREAM_PARSER=y
-          CONFIG_LSM=y
           CONFIG_SECURITY_BPF=y
           CONFIG_SECURITY_BPF_LSM=y
           EOF
